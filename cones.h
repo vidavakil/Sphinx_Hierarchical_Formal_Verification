@@ -1,0 +1,11 @@
+void Print_Inputs_Recursive (gate_ptr gptr, gate_ptr *inputs);
+void Find_Transitive_Output_Cones (gate_ptr gptr, subcir_ptr subptr);
+void Create_Subcir_Cone_Recursive (gate_ptr gptr, subcir_ptr subptr);
+subcir_ptr Create_Subcir_Cone (gate_ptr gptr);
+cones_ptr Add_Cone (gate_ptr gptr, gate_ptr cgptr);
+int Is_In_Cones (gate_ptr gptr, cones_ptr cptrl);
+void Free_Cones (gate_ptr gptr);
+void Conize (gate_ptr gptr, gate_ptr cgptr, cones_ptr cptrl, gate_ptr *inputs);
+void Conize_All (gate_ptr *inputs, gate_ptr *outputs);
+void Print_Input_Cones (gate_ptr *inputs, gate_ptr *outputs);
+int Verify (void); 

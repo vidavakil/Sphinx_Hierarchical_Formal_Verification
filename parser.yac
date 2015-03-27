@@ -1,0 +1,468 @@
+%{
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+//#include "basic.h"
+#include "names.h"
+#include "type.h"
+#include "sphinx.h"
+
+int yyerror (char*);
+int yylex ();
+int i;
+
+extern int dflag;
+extern char yytext[];
+extern int  input_no, input_cur;
+extern int vidaline_num;
+extern input_ptr temp_input;
+extern gate_ptr /* *list_of_gates */ gate_list, spec_list;
+extern char Current_Module_Name[];
+extern FILE *vidain;
+char	Current_Module_Type[30];
+extern char yytext[];
+extern context_ptr	cur_cir;
+extern array_t *place_array, *input_array, *output_array;
+
+
+int line_num = 1;
+name_ptr	nptr;
+char		*str;
+
+extern int debug_parse;
+/*
+extern name_ptr Name_Enter (char *Name, int type);
+extern input_ptr Create_Input_ZArray_N (int no);
+extern input_ptr Enter_Input_Signal_Chain (void);
+extern signal_ptr Enter_Signal_Chain (void) ;
+extern void Create_Subcircuits (void);
+extern gate_ptr *Gate_Chain_to_ZArray (gate_ptr gptr, int num);
+extern void Associate_Signal (char *formal, char *actual);
+extern void Enter_Module (char *name, signal_ptr *spptr, sig_type mode);
+extern void Set_Fanouts (void);
+extern void Enter_Level_Externals (signal_ptr sptr);
+extern void New_Specification (char *spec_name);
+*/
+#define GATE 	1
+#define SIGNAL 	2
+
+%}
+%union {
+	char *sval;
+	component_type cval;
+	int	ival;
+	gate_ptr gptr;
+	signal_ptr sptr;
+	name_ptr   nptr;
+	input_ptr  inptr;
+}; 
+
+%pure_parser
+ 
+%token <sval> ID 
+%token <sval> ID1 
+%token <ival> INTEGER 
+%token <sval> UNKNOWN 
+
+%token NETWORK END AND FF OR C_ELEMENT NOT BUFFER AOI12 AOI22 OAI12 OAI22 TABLE1 SPEC HIDDEN ANY
+%token NAND NOR ME INIT EXTERNALS BDD_ORDER SUBCIRCUITS NONE FANOUTS GATE_LIST ENTITY INTERNAL_STATUS
+
+%type <nptr> Gate_Name
+%type <sval> Formal_Name
+%type <sval> Actual_Name
+%type <sval> Mod_Type
+%type <sval> Mod_Name
+%type <inptr> Input_List
+%type <sptr> Output_List
+%type <sptr> Internal_List
+%type <sptr> BDD_Ordering
+%type <sptr> BDD_Order
+%type <ival> BIT
+%type <ival> Mode
+%type <cval> Gate_Type
+%type <sval> Nested_Module
+%type <sval> Specification_Module
+
+
+%%
+input		: Network Initialize BDD_Ordering External_Signals END
+	        | UNKNOWN 
+	          { 
+	            printf ("Parsing Error at line %d\n", line_num);
+/*                  printf ("       %s\n", $1);*/
+		  }
+		| ENTITY Gate_List END
+		;
+		
+Module		: Gate
+		| Specification_Module Initialize_SPEC BDD_Order Mode END // May 26
+		// Do we need to initialize the signals?!!!!!
+		// Mode defines the status of the internal signals of the specification
+		  { 
+		    signal_ptr *spptr ;
+		    
+		    if ($3 != NULL) 
+		      spptr = Signal_Chain_to_ZArray ($3);
+		    else 
+		      spptr = (signal_ptr *) Array_to_ZArray (place_array); 
+		    sprintf (Current_Module_Name, ""); /* void the prefix */
+	 	    Enter_Module ($1, spptr, $4); 
+
+		    // June 11 
+		    array_free (input_array); // input_array
+		    array_free (output_array); // output_array
+//		    array_free (place_array); // June 14
+		    place_array = array_alloc(signal_ptr, 1); 
+		    input_array = array_alloc(signal_ptr, 1); 
+		    output_array = array_alloc(signal_ptr, 1);       
+		  }
+		| Nested_Module Initialize BDD_Order END
+		/* Only the BDD ordering of the internal signals of the module must be given */
+		/* Only the initial value of the internal signals are given */
+		  {
+		    signal_ptr *spptr;
+		    
+		    spptr = Signal_Chain_to_ZArray ($3);
+		    sprintf (Current_Module_Name, ""); /* void the prefix */ 
+		    Enter_Module ($1, spptr, UNDEFINED);
+		  };
+
+Initialize_SPEC : Initialize
+		| 
+		;
+
+Mode		: INTERNAL_STATUS HIDDEN
+		{
+		$$ = INTERNAL;
+		}
+		| 
+		{
+		$$ = EXTERNAL;
+		};
+
+
+Specification_Module : SPEC Mod_Name Formal_Actual_List
+		  {
+		    extern FILE *yyin;
+		    extern int line_num;
+		    FILE *temp_file;
+		    int line_no;
+		    
+//		    printf("Trying to open file %s\n", $2);
+//		    temp_file = yyin;
+//		    line_no = line_num;
+		    vidaline_num = 1;
+		    vidain = fopen ($2, "r");
+    		    if ( vidain == NULL ) {
+      			printf ("Cannot open file %s\n", $2);
+      			exit (1);
+    		    } 
+    		    if (vidaparse () != 0) {
+		      printf("Parsing error\n");
+		      exit(-1);
+		    }
+		    fclose (vidain);
+//		    yyin = temp_file;
+//		    line_num = line_no;
+		    New_Specification ($2);
+		    $$ = $2;    		    		    
+		  };
+
+Nested_Module	: Mod_Name Mod_Type Formal_Actual_List
+		  {
+		    extern FILE *yyin;
+		    extern int line_num;
+		    FILE *temp_file;
+		    int line_no;
+		    
+//		    printf("Trying to open file %s\n", $2);
+		    temp_file = yyin;
+		    line_no = line_num;
+		    line_num = 1;
+		    yyin = fopen ($2, "r");
+    		    if ( yyin == NULL ) {
+      			printf ("Cannot open file %s\n", $2);
+      			exit (1);
+    		    } 
+    		    if (yyparse () != 0) {
+		      printf("Parsing error\n");
+		      exit(-1);
+		    }
+		    fclose (yyin);
+		    yyin = temp_file;
+		    line_num = line_no;
+		    $$ = $1;    		    		    
+		  };
+
+
+Module_List	: Module
+		| Module_List Module
+		;
+
+Mod_Name	: ID
+		  { 
+		    sprintf (Current_Module_Name, "%s", $1);
+		    $$ = $1;
+		  };
+		  
+
+Mod_Type	: ID
+		  {
+		    sprintf (Current_Module_Type, "%s", $1);
+		    $$ = $1;
+		  }; 
+
+		  
+Formal_Actual_List : '<' Formal_Actual '>'
+		  {
+		    Enter_Signal_Chain ();
+		  };
+
+Formal_Actual	: FA_Item
+		| Formal_Actual FA_Item
+		; 		    
+		
+FA_Item		: Formal_Name ':' Actual_Name 
+		  {
+		    Associate_Signal ($1, $3);
+		  } 
+		  
+Formal_Name	: ID
+		  { 
+		    $$ = $1;
+		  };		   
+		    		
+Actual_Name	: ID
+		  { 
+		    $$ = $1;
+		  };	
+		  
+BDD_Order	: BDD_ORDER '<' Signal_List '>'
+		  {
+		    $$ = Enter_Signal_Chain ();
+		  }
+		;
+
+Network 	: NETWORK Module_List END
+		  {
+		    list_of_gates = Gate_Chain_to_ZArray (gate_list, Gate_Num);
+		    list_of_specs = Gate_Chain_to_ZArray (spec_list, Spec_Num);
+		    End_Gate_Enter ();
+		    Set_Fanouts ();
+		  }
+		;
+
+Gate_List	: Gate
+		| Gate_List Gate
+		;
+		
+Gate		: Gate_Name Gate_Type In_Num Input_List Output_List Internal_List 
+		  {
+		  	Enter_Gate ($1, $2, $4, $5, $6, 1);
+		  }		
+		;	
+		
+In_Num		: INTEGER
+		  {
+		  	input_no = $1;		
+		        input_cur = 0;
+		  	temp_input = Create_Input_ZArray_N ($1);
+		  };
+		  	 		
+Gate_Name	: ID
+		  {
+		  	$$ = Name_Enter ($1, GATE);
+		  }
+		;		
+		
+Gate_Type	: AND
+		  {
+		  	$$ = _AND;
+		  }
+		| OR
+		  {
+		  	$$ = _OR;
+		  }		  
+		| C_ELEMENT
+		  {
+		  	$$ = _C_ELEMENT;
+		  }	
+		| NOT
+		  {
+		  	$$ = _NOT;
+		  }	
+		| BUFFER
+		  {
+		  	$$ = _BUFFER;
+		  }	
+		| ME
+		  {
+		  	$$ = _ME;
+		  }
+		| NOR
+		  {
+		  	$$ = _NOR;
+		  }
+		| NAND
+		  {
+		  	$$ = _NAND;
+		  }
+		| FF
+		  {
+		  	$$ = _FF;
+		  }
+		| AOI12
+		  {
+		  	$$ = _AOI12;
+		  }  	  			  			  			  		  			  
+		| AOI22
+		  {
+		  	$$ = _AOI22;
+		  }  	  			  			  			  		  			  
+		| OAI12
+		  {
+		  	$$ = _OAI12;
+		  }  	  			  			  			  		  			  
+		| OAI22
+		  {
+		  	$$ = _OAI22;
+		  }  	  			  			  			  		  			  
+		| TABLE1
+		  {
+		  	$$ = _TABLE1;
+		  }  
+		;		
+		
+		
+Input_List 	: '<' Input_Signal_List '>'
+		  {
+		  	$$ = Enter_Input_Signal_Chain ();
+		  }
+		;  
+
+Output_List 	: '<' Signal_List '>'
+		  {
+		  	$$ = Enter_Signal_Chain ();
+		  }
+		;  
+	
+Internal_List 	: '<' Signal_List '>'
+		  {
+		  	$$ = Enter_Signal_Chain ();
+		  }
+		|
+		  {
+		   	$$ = Enter_Signal_Chain ();
+		  }  
+		;  
+		
+Signal_List	: Signal
+		| Signal_List Signal
+		;
+		
+Input_Signal_List : Input_Signal
+		| Input_Signal_List Input_Signal
+		;
+		
+Signal		: ID
+		  {
+		  // Since my code does not need io status, I pass NONE!
+		  	Enter_Signal ($1, UNDEFINED); 
+		  }
+		| NONE 
+		  {
+		  };
+		  
+Input_Signal	: '+' ID
+		  {
+		  	Enter_Input_Signal ('+', $2);
+		  }
+		| '#' ID
+		  {
+		  	Enter_Input_Signal ('-', $2);
+		  }
+		| '-' ID
+		  {
+		  	Enter_Input_Signal ('-', $2);
+		  };
+
+Initialize 	: INIT '<' Initial_State '>'
+		  {
+			Enter_Signal_Chain ();
+		  };		
+
+Initial_State	: Signal_State
+		| Initial_State Signal_State
+		;
+		
+Signal_State	: ID BIT
+		  {
+		  	Enter_Initial_State ($1, $2);
+		  }
+		;
+		
+BIT		: INTEGER
+		  {
+		  	$$ = $1;
+		  	if ($$ != 0 && $$ != 1) {
+		  	  printf ("Bad Initial Value %d\n", $$);
+		  	  exit (-1);
+		  	}  
+		  }
+		;  		
+/*		  
+External_Signals: EXTERNALS '<' Signal_List '>'
+		  {
+		  	Enter_External_Signals (Enter_Signal_Chain ());
+		  }
+		;
+*/
+
+External_Signals: EXTERNALS List_of_Signal_List
+		  {		  	
+		  }
+		;
+		
+List_of_Signal_List
+		: List_of_Signal
+		| List_of_Signal_List List_of_Signal
+		;
+		
+List_of_Signal	: '<' Item_List '>'  // was '<' Signal_List '>' before Feb 10
+		{
+		  	Enter_Level_Externals (Enter_Signal_Chain ());		
+		};		
+		  	
+		
+		
+BDD_Ordering	: BDD_ORDER '<' Item_List '>'
+		  {
+		  	$$ = Enter_Signal_Chain ();
+		  	BDD_Order ($$);
+		  }
+		;
+		
+Item_List	: Item
+		| Item_List Item
+		| ANY
+		;
+		
+Item		: ID
+		  {
+		    Enter_Item ($1);
+		  }
+		| ID1
+		  {
+		    Enter_Item ($1);
+		  }
+		;  				
+
+%%
+
+yyerror (char *s)
+{
+    printf ("%s at line number %d reading %s\n",s,line_num,yytext);
+}
+
+
